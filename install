@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+set -euo pipefail
+APP=openscreen
+
+MUTED='\033[0;2m'
+RED='\033[0;31m'
+ORANGE='\033[38;5;214m'
+NC='\033[0m' # No Color
+
+usage() {
+    cat <<EOF
+OpenScreen Installer
+
+Usage: install.sh [options]
+
+Options:
+    -h, --help              Show help
+    -v, --version <version> Install specific version (e.g., 1.1.0)
+        --no-desktop       Don't create desktop launcher (Linux only)
+
+Environment Variables:
+    OPENSCREEN_INSTALL_DIR  Custom AppImage installation directory (Linux only)
+
+Examples:
+    curl -fsSL https://raw.githubusercontent.com/siddharthvaddem/openscreen/main/install | bash
+    curl -fsSL https://raw.githubusercontent.com/siddharthvaddem/openscreen/main/install | bash -s -- --version 1.1.0
+    OPENSCREEN_INSTALL_DIR=/opt/openscreen curl -fsSL https://raw.githubusercontent.com/siddharthvaddem/openscreen/main/install | bash
+EOF
+}
+
+requested_version=${VERSION:-}
+no_desktop=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -v|--version)
+            if [[ -n "${2:-}" ]]; then
+                requested_version="$2"
+                shift 2
+            else
+                echo -e "${RED}--version requires a version argument${NC}"
+                exit 1
+            fi
+            ;;
+        --no-desktop)
+            no_desktop=true
+            shift
+            ;;
+        *)
+            echo -e "${RED}Unknown option '$1'\n${NC}"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+raw_os=$(uname -s)
+os=$(echo "$raw_os" | tr '[:upper:]' '[:lower:]')
+case "$raw_os" in
+  Darwin*) os="darwin" ;;
+  Linux*) os="linux" ;;
+  MINGW*|MSYS*|CYGWIN*) os="windows" ;;
+esac
+
+arch=$(uname -m)
+if [[ "$arch" == "aarch64" ]]; then
+  arch="arm64"
+fi
+if [[ "$arch" == "x86_64" ]]; then
+  arch="x64"
+fi
+
+if [ "$os" = "darwin" ] && [ "$arch" = "x64" ]; then
+  rosetta_flag=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+  if [ "$rosetta_flag" = "1" ]; then
+    arch="arm64"
+  fi
+fi
+
+combo="$os-$arch"
+case "$combo" in
+  linux-x64|linux-arm64|darwin-x64|darwin-arm64|windows-x64)
+    ;;
+  *)
+    echo -e "${RED}Unsupported OS/Arch: $os/$arch${NC}"
+    exit 1
+    ;;
+esac
+
+filename=""
+install_dir=""
+
+if [ "$os" = "linux" ]; then
+    filename="Openscreen-Linux-${requested_version:-latest}.AppImage"
+    install_dir="${OPENSCREEN_INSTALL_DIR:-/usr/local/bin}"
+elif [ "$os" = "darwin" ]; then
+    filename="Openscreen-Mac-${arch}-${requested_version:-latest}-Installer.dmg"
+    install_dir="$HOME/Downloads"
+elif [ "$os" = "windows" ]; then
+    filename="Openscreen-Windows-${requested_version:-latest}-Setup.exe"
+    install_dir="$USERPROFILE\\Downloads"
+fi
+
+mkdir -p "$install_dir"
+
+print_message() {
+    local level=$1
+    local message=$2
+    local color=""
+
+    case $level in
+        info) color="${NC}" ;;
+        warning) color="${NC}" ;;
+        error) color="${RED}" ;;
+    esac
+
+    echo -e "${color}${message}${NC}"
+}
+
+unbuffered_sed() {
+    if echo | sed -u -e "" >/dev/null 2>&1; then
+        sed -nu "$@"
+    elif echo | sed -l -e "" >/dev/null 2>&1; then
+        sed -nl "$@"
+    else
+        local pad="$(printf "\n%512s" "")"
+        sed -ne "s/$/\\${pad}/" "$@"
+    fi
+}
+
+print_progress() {
+    local bytes="$1"
+    local length="$2"
+    [ "$length" -gt 0 ] || return 0
+
+    local width=50
+    local percent=$(( bytes * 100 / length ))
+    [ "$percent" -gt 100 ] && percent=100
+    local on=$(( percent * width / 100 ))
+    local off=$(( width - on ))
+
+    local filled=$(printf "%*s" "$on" "")
+    filled=${filled// /■}
+    local empty=$(printf "%*s" "$off" "")
+    empty=${empty// /･}
+
+    printf "\r${MUTED}%s%s %3d%%${NC}" "$filled" "$empty" "$percent" >&4
+}
+
+download_with_progress() {
+    local url="$1"
+    local output="$2"
+
+    if [ -t 2 ]; then
+        exec 4>&2
+    else
+        exec 4>/dev/null
+    fi
+
+    local tmp_dir=${TMPDIR:-/tmp}
+    local basename="${tmp_dir}/openscreen_install_$$"
+    local tracefile="${basename}.trace"
+
+    rm -f "$tracefile"
+    mkfifo "$tracefile"
+
+    printf "\033[?25l" >&4
+
+    trap "trap - RETURN; rm -f \"$tracefile\"; printf '\033[?25h' >&4; exec 4>&-" RETURN
+
+    (
+        curl --trace-ascii "$tracefile" -s -L -o "$output" "$url"
+    ) &
+    local curl_pid=$!
+
+    unbuffered_sed \
+        -e 'y/ACDEGHLNORTV/acdeghlnortv/' \
+        -e '/^0000: content-length:/p' \
+        -e '/^<= recv data/p' \
+        "$tracefile" | \
+    {
+        local length=0
+        local bytes=0
+
+        while IFS=" " read -r -a line; do
+            [ "${#line[@]}" -lt 2 ] && continue
+            local tag="${line[0]} ${line[1]}"
+
+            if [ "$tag" = "0000: content-length:" ]; then
+                length="${line[2]}"
+                length=$(echo "$length" | tr -d '\r')
+                bytes=0
+            elif [ "$tag" = "<= recv" ]; then
+                local size="${line[3]}"
+                bytes=$(( bytes + size ))
+                if [ "$length" -gt 0 ]; then
+                    print_progress "$bytes" "$length"
+                fi
+            fi
+        done
+    }
+
+    wait $curl_pid
+    local ret=$?
+    echo "" >&4
+    return $ret
+}
+
+get_latest_version() {
+    local version=$(curl -s https://api.github.com/repos/siddharthvaddem/openscreen/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+
+    if [[ $? -ne 0 || -z "$version" ]]; then
+        echo -e "${RED}Failed to fetch version${NC}"
+        exit 1
+    fi
+
+    echo "$version"
+}
+
+check_version() {
+    local version=$1
+
+    if [ "$os" = "linux" ]; then
+        local install_path="$install_dir/openscreen"
+        if [ -f "$install_path" ]; then
+            echo -e "${ORANGE}OpenScreen already installed at: ${NC}$install_path\n${MUTED}Set OPENSCREEN_INSTALL_DIR to install elsewhere${NC}"
+            exit 0
+        fi
+    elif [ "$os" = "darwin" ]; then
+        if [ -d "/Applications/Openscreen.app" ]; then
+            echo -e "${ORANGE}OpenScreen already installed in /Applications/${NC}\n${MUTED}Delete existing installation to reinstall${NC}"
+            exit 0
+        fi
+    fi
+}
+
+download_file() {
+    local url=$1
+    local output=$2
+    local version=$3
+
+    print_message info "\n${MUTED}Downloading ${NC}openscreen ${MUTED}version: ${NC}$version"
+    print_message info "${MUTED}Source: ${NC}$url"
+    print_message info "${MUTED}Destination: ${NC}$output"
+    echo ""
+
+    if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$output"; then
+        curl -# -L -o "$output" "$url"
+    fi
+
+    if [ ! -f "$output" ]; then
+        echo -e "${RED}Download failed${NC}"
+        exit 1
+    fi
+}
+
+install_linux() {
+    local output="$install_dir/openscreen"
+
+    download_file "$url" "$output" "$specific_version"
+
+    chmod +x "$output"
+    print_message info "OpenScreen installed"
+    print_message info "${MUTED}Installed to ${NC}$output"
+    echo ""
+
+    if [ "$no_desktop" != "true" ]; then
+        create_desktop_launcher
+    fi
+
+    echo ""
+    print_message info "${MUTED}Run: ${NC}openscreen"
+}
+
+create_desktop_launcher() {
+    local desktop_dir="$HOME/.local/share/applications"
+    mkdir -p "$desktop_dir"
+
+    local desktop_file="$desktop_dir/openscreen.desktop"
+
+    cat > "$desktop_file" <<EOF
+[Desktop Entry]
+Name=OpenScreen
+Comment=Open Source Screen Recording Studio
+Exec=$install_dir/openscreen
+Icon=openscreen
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;
+StartupNotify=true
+EOF
+
+    print_message info "Desktop launcher created"
+    print_message info "${MUTED}Created ${NC}$desktop_file"
+}
+
+install_macos() {
+    local output="$install_dir/$filename"
+
+    download_file "$url" "$output" "$specific_version"
+
+    print_message info "OpenScreen installer downloaded"
+    print_message info "${MUTED}Downloaded to ${NC}$output"
+    echo ""
+
+    cat <<EOF
+Next steps:
+
+1. Open the DMG file:
+   ${MUTED}open "$output"${NC}
+
+2. Drag ${MUTED}Openscreen.app${NC} to Applications
+
+3. Grant permissions (Screen Recording & Accessibility):
+   ${MUTED}Go to System Preferences > Security & Privacy > Screen Recording${NC}
+   ${MUTED}Find Openscreen and enable it${NC}
+
+${ORANGE}If Gatekeeper blocks the app, run:${NC}
+   xattr -rd com.apple.quarantine /Applications/Openscreen.app
+
+Then restart the app.
+EOF
+}
+
+install_windows() {
+    local output="$install_dir\\$filename"
+
+    download_file "$url" "$output" "$specific_version"
+
+    print_message info "OpenScreen installer downloaded"
+    print_message info "${MUTED}Downloaded to ${NC}$output"
+    echo ""
+
+    cat <<EOF
+Next steps:
+
+1. Double-click the installer file to run it
+
+2. Follow the installation wizard prompts
+
+3. Grant permissions when prompted (Screen Recording)
+
+${MUTED}Find OpenScreen in your Start menu${NC}
+EOF
+}
+
+determine_url() {
+    local version=$1
+    url="https://github.com/siddharthvaddem/openscreen/releases/download/v${version}/${filename//latest/$version}"
+}
+
+main() {
+    if [ -z "$requested_version" ]; then
+        specific_version=$(get_latest_version)
+    else
+        requested_version="${requested_version#v}"
+        specific_version=$requested_version
+        http_status=$(curl -sI -o /dev/null -w "%{http_code}" "https://github.com/siddharthvaddem/openscreen/releases/tag/v${requested_version}")
+        if [ "$http_status" = "404" ]; then
+    echo -e "${RED}Release v${requested_version} not found${NC}"
+    echo -e "${MUTED}Available releases: https://github.com/siddharthvaddem/openscreen/releases${NC}"
+            exit 1
+        fi
+    fi
+
+    determine_url "$specific_version"
+    check_version "$specific_version"
+
+    if [ "$os" = "linux" ]; then
+        if [ "$install_dir" = "/usr/local/bin" ] && [ "$EUID" -ne 0 ]; then
+    echo -e "${ORANGE}Installing to $install_dir requires sudo privileges${NC}"
+    echo -e "${MUTED}Set OPENSCREEN_INSTALL_DIR to install elsewhere${NC}"
+            echo ""
+            sudo bash "$0" "$@"
+            exit 0
+        fi
+        install_linux
+    elif [ "$os" = "darwin" ]; then
+        install_macos
+    elif [ "$os" = "windows" ]; then
+        install_windows
+    fi
+
+    echo -e ""
+    echo -e "${MUTED}For more information visit ${NC}https://github.com/siddharthvaddem/openscreen"
+    echo -e ""
+}
+
+main "$@"
