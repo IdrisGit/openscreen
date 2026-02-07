@@ -95,7 +95,6 @@ os=$(echo "$raw_os" | tr '[:upper:]' '[:lower:]')
 case "$raw_os" in
   Darwin*) os="darwin" ;;
   Linux*) os="linux" ;;
-  MINGW*|MSYS*|CYGWIN*) os="windows" ;;
 esac
 
 arch=$(uname -m)
@@ -118,7 +117,7 @@ fi
 
 combo="$os-$arch"
 case "$combo" in
-  linux-x64|linux-arm64|darwin-x64|darwin-arm64|windows-x64)
+  linux-x64|linux-arm64|darwin-x64|darwin-arm64)
     ;;
   *)
     echo -e "${RED}Unsupported OS/Arch: $os/$arch${NC}"
@@ -135,9 +134,6 @@ if [ "$os" = "linux" ]; then
 elif [ "$os" = "darwin" ]; then
     filename="Openscreen-Mac-${arch}-${requested_version:-latest}-Installer.dmg"
     install_dir="$HOME/Downloads"
-elif [ "$os" = "windows" ]; then
-    filename="Openscreen-Windows-${requested_version:-latest}-Setup.exe"
-    install_dir="$USERPROFILE\\Downloads"
 fi
 
 mkdir -p "$install_dir"
@@ -344,7 +340,7 @@ download_file() {
         print_message warning "${MUTED}Could not fetch checksum from GitHub API${NC}"
     fi
 
-    if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$output"; then
+    if ! [ -t 2 ] || ! download_with_progress "$url" "$output"; then
         curl -# -L -o "$output" "$url"
     fi
 
@@ -426,29 +422,6 @@ Then restart the app.
 EOF
 }
 
-install_windows() {
-    local url=$1
-    local output="$install_dir\\$filename"
-
-    download_file "$url" "$output" "$specific_version"
-
-    print_message info "OpenScreen installer downloaded"
-    print_message info "${MUTED}Downloaded to ${NC}$output"
-    echo ""
-
-    cat <<EOF
-Next steps:
-
-1. Double-click the installer file to run it
-
-2. Follow the installation wizard prompts
-
-3. Grant permissions when prompted (Screen Recording)
-
-${MUTED}Find OpenScreen in your Start menu${NC}
-EOF
-}
-
 determine_url() {
     local version=$1
     url="https://github.com/siddharthvaddem/openscreen/releases/download/v${version}/${filename//latest/$version}"
@@ -492,8 +465,6 @@ main() {
         install_linux "$url"
     elif [ "$os" = "darwin" ]; then
         install_macos "$url"
-    elif [ "$os" = "windows" ]; then
-        install_windows "$url"
     fi
 
     echo -e ""
