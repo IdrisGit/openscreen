@@ -2,6 +2,10 @@
 set -euo pipefail
 APP=openscreen
 
+# Store original arguments and script source for sudo re-execution
+ORIGINAL_ARGS=("$@")
+SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
+
 MUTED='\033[0;2m'
 RED='\033[0;31m'
 ORANGE='\033[38;5;214m'
@@ -435,11 +439,21 @@ main() {
 
     if [ "$os" = "linux" ]; then
         if [ "$install_dir" = "/usr/local/bin" ] && [ "$EUID" -ne 0 ]; then
-    echo -e "${ORANGE}Installing to $install_dir requires sudo privileges${NC}"
-    echo -e "${MUTED}Set OPENSCREEN_INSTALL_DIR to install elsewhere${NC}"
+            echo -e "${ORANGE}Installing to $install_dir requires sudo privileges${NC}"
+            echo -e "${MUTED}Set OPENSCREEN_INSTALL_DIR to install elsewhere${NC}"
             echo ""
-            sudo bash "$0" "$@"
-            exit 0
+            # Re-execute with sudo, preserving original arguments
+            if [ -n "$SCRIPT_SOURCE" ] && [ -f "$SCRIPT_SOURCE" ]; then
+                # Script is a file, execute it directly
+                exec sudo bash "$SCRIPT_SOURCE" "${ORIGINAL_ARGS[@]}"
+            else
+                # Script was piped - download to temp file and execute with sudo
+                TEMP_SCRIPT=$(mktemp)
+                curl -fsSL "https://raw.githubusercontent.com/siddharthvaddem/openscreen/main/install" -o "$TEMP_SCRIPT"
+                sudo bash "$TEMP_SCRIPT" "${ORIGINAL_ARGS[@]}"
+                sudo rm -f "$TEMP_SCRIPT"
+                exit 0
+            fi
         fi
         install_linux
     elif [ "$os" = "darwin" ]; then
