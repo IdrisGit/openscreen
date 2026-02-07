@@ -1,8 +1,11 @@
 
-name: Build Electron App
+name: Build and Release Electron App
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   build-windows:
@@ -22,12 +25,13 @@ jobs:
       - name: Install app dependencies
         run: npx electron-builder install-app-deps
         
-      - name: Build Windows app
-        run: npm run build:win
+      - name: Build and Release Windows app
+        run: npm run build:win -- --publish=onTag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
-      - name: Upload Windows build
+      - name: Upload Windows build artifacts
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
@@ -56,12 +60,13 @@ jobs:
       - name: Install app dependencies
         run: npx electron-builder install-app-deps
 
-      - name: Build macOS app
-        run: npm run build:mac
+      - name: Build and Release macOS app
+        run: npm run build:mac -- --publish=onTag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload macOS build
+      - name: Upload macOS build artifacts
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: macos-installer
@@ -85,15 +90,15 @@ jobs:
       - name: Install app dependencies
         run: npx electron-builder install-app-deps
 
-      - name: Build Linux app
-        run: npm run build:linux
+      - name: Build and Release Linux app
+        run: npm run build:linux -- --publish=onTag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload Linux build
+      - name: Upload Linux build artifacts
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: linux-installer
           path: release/**/*.AppImage
           retention-days: 30
-

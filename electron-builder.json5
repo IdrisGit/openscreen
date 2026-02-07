@@ -27,6 +27,13 @@
     }
   ],
 
+  "publish": {
+    "provider": "github",
+    "owner": "siddharthvaddem",
+    "repo": "openscreen",
+    "releaseType": "release"
+  },
+
   "mac": {
     "target": [
       {
