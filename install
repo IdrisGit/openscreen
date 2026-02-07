@@ -176,7 +176,7 @@ print_progress() {
     [ "$length" -gt 0 ] || return 0
 
     local width=50
-    local percent=$(( bytes * 100 / length ))
+    local percent=$(( bytes / length * 100 ))
     [ "$percent" -gt 100 ] && percent=100
     local on=$(( percent * width / 100 ))
     local off=$(( width - on ))
@@ -208,12 +208,18 @@ download_with_progress() {
 
     printf "\033[?25l" >&4
 
-    trap "trap - RETURN; rm -f \"$tracefile\"; printf '\033[?25h' >&4; exec 4>&-" RETURN
+    cleanup() {
+        rm -f "$tracefile"
+        [ -n "${curl_pid:-}" ] && kill "$curl_pid" 2>/dev/null
+        printf '\033[?25h' >&4
+        exec 4>&-
+    }
+    trap cleanup EXIT
+    trap 'cleanup; exit 130' INT
+    trap 'cleanup; exit 143' TERM
 
-    (
-        curl --trace-ascii "$tracefile" -s -L -o "$output" "$url"
-    ) &
-    local curl_pid=$!
+    curl --trace-ascii "$tracefile" -s -L -o "$output" "$url" &
+    curl_pid=$!
 
     unbuffered_sed \
         -e 'y/ACDEGHLNORTV/acdeghlnortv/' \
