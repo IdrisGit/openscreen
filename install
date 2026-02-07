@@ -389,7 +389,15 @@ install_linux() {
 
 create_desktop_launcher() {
     local desktop_dir="$HOME/.local/share/applications"
+    local icon_dir="$HOME/.local/share/icons/hicolor/256x256/apps"
     mkdir -p "$desktop_dir"
+    mkdir -p "$icon_dir"
+
+    # Download icon if not present
+    local icon_file="$icon_dir/openscreen.png"
+    if [ ! -f "$icon_file" ]; then
+        curl -sL -o "$icon_file" "https://raw.githubusercontent.com/siddharthvaddem/openscreen/main/icons/icons/png/256x256.png" 2>/dev/null || true
+    fi
 
     local desktop_file="$desktop_dir/openscreen.desktop"
 
