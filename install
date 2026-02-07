@@ -11,6 +11,31 @@ RED='\033[0;31m'
 ORANGE='\033[38;5;214m'
 NC='\033[0m' # No Color
 
+check_commands() {
+    local missing_commands=()
+    local cmd
+    
+    for cmd in curl sed mkfifo chmod mkdir; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing_commands+=("$cmd")
+        fi
+    done
+    
+    if [ ${#missing_commands[@]} -ne 0 ]; then
+        echo -e "${RED}Error: The following required commands are missing:${NC}"
+        for cmd in "${missing_commands[@]}"; do
+            echo "  - $cmd"
+        done
+        echo ""
+        echo -e "${MUTED}Install instructions:${NC}"
+        echo "  Ubuntu/Debian: sudo apt-get install curl sed coreutils"
+        echo "  CentOS/RHEL:   sudo yum install curl sed coreutils"
+        echo "  macOS:         curl and sed are pre-installed"
+        echo "  Alpine:        apk add curl sed coreutils"
+        exit 1
+    fi
+}
+
 usage() {
     cat <<EOF
 OpenScreen Installer
@@ -62,6 +87,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Check for required commands before proceeding
+check_commands
+
 raw_os=$(uname -s)
 os=$(echo "$raw_os" | tr '[:upper:]' '[:lower:]')
 case "$raw_os" in
@@ -71,18 +99,21 @@ case "$raw_os" in
 esac
 
 arch=$(uname -m)
+
+# Check for Rosetta 2 on macOS before converting arch names
+if [ "$os" = "darwin" ] && [ "$arch" = "x86_64" ]; then
+  rosetta_flag=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+  if [ "$rosetta_flag" = "1" ]; then
+    arch="arm64"
+  fi
+fi
+
+# Convert architecture names to standardized format
 if [[ "$arch" == "aarch64" ]]; then
   arch="arm64"
 fi
 if [[ "$arch" == "x86_64" ]]; then
   arch="x64"
-fi
-
-if [ "$os" = "darwin" ] && [ "$arch" = "x64" ]; then
-  rosetta_flag=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
-  if [ "$rosetta_flag" = "1" ]; then
-    arch="arm64"
-  fi
 fi
 
 combo="$os-$arch"
@@ -326,6 +357,7 @@ download_file() {
 }
 
 install_linux() {
+    local url=$1
     local output="$install_dir/openscreen"
 
     download_file "$url" "$output" "$specific_version"
@@ -366,6 +398,7 @@ EOF
 }
 
 install_macos() {
+    local url=$1
     local output="$install_dir/$filename"
 
     download_file "$url" "$output" "$specific_version"
@@ -394,6 +427,7 @@ EOF
 }
 
 install_windows() {
+    local url=$1
     local output="$install_dir\\$filename"
 
     download_file "$url" "$output" "$specific_version"
@@ -455,11 +489,11 @@ main() {
                 exit 0
             fi
         fi
-        install_linux
+        install_linux "$url"
     elif [ "$os" = "darwin" ]; then
-        install_macos
+        install_macos "$url"
     elif [ "$os" = "windows" ]; then
-        install_windows
+        install_windows "$url"
     fi
 
     echo -e ""
