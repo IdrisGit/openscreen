@@ -45,10 +45,16 @@ Usage: install.sh [options]
 Options:
     -h, --help              Show help
     -v, --version <version> Install specific version (e.g., 1.1.0)
+    -f, --force             Force reinstall if already installed
         --no-desktop       Don't create desktop launcher (Linux only)
 
 Environment Variables:
     OPENSCREEN_INSTALL_DIR  Custom AppImage installation directory (Linux only)
+
+Exit Codes:
+    0                       Success
+    1                       General error
+    2                       Already installed (use --force to override)
 
 Examples:
     curl -fsSL https://raw.githubusercontent.com/siddharthvaddem/openscreen/main/install | bash
@@ -59,6 +65,7 @@ EOF
 
 requested_version=${VERSION:-}
 no_desktop=false
+force=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -77,6 +84,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-desktop)
             no_desktop=true
+            shift
+            ;;
+        -f|--force)
+            force=true
             shift
             ;;
         *)
@@ -306,16 +317,21 @@ verify_checksum() {
 check_version() {
     local version=$1
 
+    # Skip check if force flag is set
+    if [ "$force" = "true" ]; then
+        return 0
+    fi
+
     if [ "$os" = "linux" ]; then
         local install_path="$install_dir/openscreen"
         if [ -f "$install_path" ]; then
             echo -e "${ORANGE}OpenScreen already installed at: ${NC}$install_path\n${MUTED}Set OPENSCREEN_INSTALL_DIR to install elsewhere${NC}"
-            exit 0
+            exit 2
         fi
     elif [ "$os" = "darwin" ]; then
         if [ -d "/Applications/Openscreen.app" ]; then
             echo -e "${ORANGE}OpenScreen already installed in /Applications/${NC}\n${MUTED}Delete existing installation to reinstall${NC}"
-            exit 0
+            exit 2
         fi
     fi
 }
