@@ -2,9 +2,8 @@
 set -euo pipefail
 APP=openscreen
 
-# Store original arguments and script source for sudo re-execution
 ORIGINAL_ARGS=("$@")
-SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 
 MUTED='\033[0;2m'
 RED='\033[0;31m'
@@ -98,7 +97,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check for required commands before proceeding
 check_commands
 
 raw_os=$(uname -s)
@@ -110,7 +108,6 @@ esac
 
 arch=$(uname -m)
 
-# Check for Rosetta 2 on macOS before converting arch names
 if [ "$os" = "darwin" ] && [ "$arch" = "x86_64" ]; then
   rosetta_flag=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
   if [ "$rosetta_flag" = "1" ]; then
@@ -118,7 +115,6 @@ if [ "$os" = "darwin" ] && [ "$arch" = "x86_64" ]; then
   fi
 fi
 
-# Convert architecture names to standardized format
 if [[ "$arch" == "aarch64" ]]; then
   arch="arm64"
 fi
@@ -263,61 +259,9 @@ get_latest_version() {
     echo "$version"
 }
 
-get_checksum_for_asset() {
-    local version=$1
-    local asset_name=$2
-    local api_url
-
-    if [ "$version" = "latest" ]; then
-        api_url="https://api.github.com/repos/siddharthvaddem/openscreen/releases/latest"
-    else
-        api_url="https://api.github.com/repos/siddharthvaddem/openscreen/releases/tags/v${version}"
-    fi
-
-    local checksum=$(curl -s "$api_url" | grep -A 20 '"name": "'"$asset_name"'"' | grep '"digest":' | head -1 | sed 's/.*"digest": "\([^"]*\)".*/\1/')
-
-    if [ -z "$checksum" ]; then
-        echo ""
-        return 1
-    fi
-
-    echo "$checksum"
-}
-
-verify_checksum() {
-    local file=$1
-    local expected_checksum=$2
-
-    if [ -z "$expected_checksum" ]; then
-        return 0
-    fi
-
-    if ! command -v sha256sum >/dev/null 2>&1; then
-        if command -v shasum >/dev/null 2>&1; then
-            local computed=$(shasum -a 256 "$file" | awk '{print $1}')
-        else
-            print_message warning "${MUTED}Cannot verify checksum: sha256sum or shasum not found${NC}"
-            return 0
-        fi
-    else
-        local computed=$(sha256sum "$file" | awk '{print $1}')
-    fi
-
-    if [ "$computed" != "$expected_checksum" ]; then
-        echo -e "${RED}Checksum verification failed!${NC}"
-        echo -e "${MUTED}Expected: $expected_checksum${NC}"
-        echo -e "${MUTED}Got:      $computed${NC}"
-        rm -f "$file"
-        exit 1
-    fi
-
-    return 0
-}
-
 check_version() {
     local version=$1
 
-    # Skip check if force flag is set
     if [ "$force" = "true" ]; then
         return 0
     fi
@@ -346,16 +290,6 @@ download_file() {
     print_message info "${MUTED}Destination: ${NC}$output"
     echo ""
 
-    local expected_checksum=""
-    local checksum_asset_name="${filename//latest/$version}"
-    print_message info "${MUTED}Fetching checksum...${NC}"
-    expected_checksum=$(get_checksum_for_asset "$version" "$checksum_asset_name")
-    if [ -n "$expected_checksum" ]; then
-        print_message info "${MUTED}Checksum: ${NC}$expected_checksum"
-    else
-        print_message warning "${MUTED}Could not fetch checksum from GitHub API${NC}"
-    fi
-
     if ! [ -t 2 ] || ! download_with_progress "$url" "$output"; then
         curl -# -L -o "$output" "$url"
     fi
@@ -364,8 +298,6 @@ download_file() {
         echo -e "${RED}Download failed${NC}"
         exit 1
     fi
-
-    verify_checksum "$output" "$expected_checksum"
 }
 
 install_linux() {
@@ -393,7 +325,6 @@ create_desktop_launcher() {
     mkdir -p "$desktop_dir"
     mkdir -p "$icon_dir"
 
-    # Download icon if not present
     local icon_file="$icon_dir/openscreen.png"
     if [ ! -f "$icon_file" ]; then
         curl -sL -o "$icon_file" "https://raw.githubusercontent.com/siddharthvaddem/openscreen/main/icons/icons/png/256x256.png" 2>/dev/null || true
@@ -459,8 +390,8 @@ main() {
         specific_version=$requested_version
         http_status=$(curl -sI -o /dev/null -w "%{http_code}" "https://github.com/siddharthvaddem/openscreen/releases/tag/v${requested_version}")
         if [ "$http_status" = "404" ]; then
-    echo -e "${RED}Release v${requested_version} not found${NC}"
-    echo -e "${MUTED}Available releases: https://github.com/siddharthvaddem/openscreen/releases${NC}"
+            echo -e "${RED}Release v${requested_version} not found${NC}"
+            echo -e "${MUTED}Available releases: https://github.com/siddharthvaddem/openscreen/releases${NC}"
             exit 1
         fi
     fi
@@ -473,12 +404,9 @@ main() {
             echo -e "${ORANGE}Installing to $install_dir requires sudo privileges${NC}"
             echo -e "${MUTED}Set OPENSCREEN_INSTALL_DIR to install elsewhere${NC}"
             echo ""
-            # Re-execute with sudo, preserving original arguments
             if [ -n "$SCRIPT_SOURCE" ] && [ -f "$SCRIPT_SOURCE" ]; then
-                # Script is a file, execute it directly
                 exec sudo bash "$SCRIPT_SOURCE" "${ORIGINAL_ARGS[@]}"
             else
-                # Script was piped - download to temp file and execute with sudo
                 TEMP_SCRIPT=$(mktemp)
                 curl -fsSL "https://raw.githubusercontent.com/siddharthvaddem/openscreen/main/install" -o "$TEMP_SCRIPT"
                 sudo bash "$TEMP_SCRIPT" "${ORIGINAL_ARGS[@]}"
